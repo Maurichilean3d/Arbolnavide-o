@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>🎄 Low-Poly Xmas PRO (Bloom + Mucha Luz)</title>
+  <style>
+    html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}
+    canvas{display:block}
+  </style>
+</head>
+<body>
+<script type="module">
+  import * as THREE from "https://cdn.skypack.dev/three@0.128.0";
+  import { EffectComposer } from "https://cdn.skypack.dev/three@0.128.0/examples/jsm/postprocessing/EffectComposer.js";
+  import { RenderPass } from "https://cdn.skypack.dev/three@0.128.0/examples/jsm/postprocessing/RenderPass.js";
+  import { UnrealBloomPass } from "https://cdn.skypack.dev/three@0.128.0/examples/jsm/postprocessing/UnrealBloomPass.js";
+  import { RoomEnvironment } from "https://cdn.skypack.dev/three@0.128.0/examples/jsm/environments/RoomEnvironment.js";
+
+  let scene, camera, renderer, composer, bloomPass;
+  let tree, star;
+  const treeHeight = 4.4;
+
+  // “Control de wow”
+  const SETTINGS = {
+    bloomStrength: 1.75,
+    bloomRadius: 0.35,
+    bloomThreshold: 0.05,
+    exposure: 1.05,
+    bulbs: 220,          // MUCHAS luces
+    ornaments: 55,       // esferas reflectantes
+    spin: 0.18
+  };
+
+  init();
+  animate();
+
+  function init(){
+    renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:"high-performance" });
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setClearColor(0x000000, 1);
+
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // Color más potente
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = SETTINGS.exposure;
+
+    document.body.appendChild(renderer.domElement);
+
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.1, 100);
+    camera.position.set(0, 2.2, 9);
+    camera.lookAt(0, 2.2, 0);
+
+    // EnvMap para reflejos SIN cargar HDR externo:
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = envTex;
+
+    tree = createTree(envTex);
+    scene.add(tree);
+
+    setupLighting();
+    setupPost();
+
+    window.addEventListener("resize", onResize);
+  }
+
+  function setupPost(){
+    composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+
+    bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(innerWidth, innerHeight),
+      SETTINGS.bloomStrength,
+      SETTINGS.bloomRadius,
+      SETTINGS.bloomThreshold
+    );
+    composer.addPass(bloomPass);
+  }
+
+  function setupLighting(){
+    // poquito para no “levantar” fondo
+    scene.add(new THREE.AmbientLight(0xffffff, 0.10));
+
+    const key = new THREE.SpotLight(0xffffff, 2.2, 35, Math.PI/8, 0.35, 1.0);
+    key.position.set(2.8, treeHeight + 3.2, 7.5);
+    key.target.position.set(0, 2.2, 0);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048,2048);
+    key.shadow.bias = -0.00025;
+    scene.add(key, key.target);
+
+    // Rim para que el low-poly “corte” rico
+    const rim = new THREE.DirectionalLight(0x66ccff, 0.25);
+    rim.position.set(-6, 4, -6);
+    scene.add(rim);
+
+    // Plano invisible para sombras (opcional, puedes apagarlo si quieres FULL negro)
+    const shadowPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(50,50),
+      new THREE.ShadowMaterial({ opacity: 0.14 })
+    );
+    shadowPlane.rotation.x = -Math.PI/2;
+    shadowPlane.position.y = 0;
+    shadowPlane.receiveShadow = true;
+    scene.add(shadowPlane);
+  }
+
+  function createTree(envTex){
+    const group = new THREE.Group();
+
+    // Tronco
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.22, 0.35, 1.1, 7),
+      new THREE.MeshStandardMaterial({ color:0x6b3a18, roughness:1, flatShading:true })
+    );
+    trunk.position.y = 0.55;
+    trunk.castShadow = true;
+    group.add(trunk);
+
+    // Follaje low-poly (más oscuro y “pro”)
+    const treeMat = new THREE.MeshStandardMaterial({
+      color: 0x0a5a2d,
+      roughness: 0.92,
+      metalness: 0.02,
+      flatShading: true
+    });
+
+    const levels = 5;
+    const cones = [];
+    for(let i=0;i<levels;i++){
+      const radius = 2.25 - i*0.45;
+      const height = 1.65 - i*0.08;
+      const yBase = 1.05 + i*0.74;
+
+      const geo = new THREE.ConeGeometry(radius, height, 9, 1);
+      jitter(geo, 0.028); // sutil (no líneas raras)
+      const cone = new THREE.Mesh(geo, treeMat);
+
+      cone.position.y = yBase + height*0.5;
+      cone.castShadow = true;
+      cone.receiveShadow = true;
+      group.add(cone);
+
+      cones.push({ radius, height, yBase, yTop: yBase + height });
+    }
+
+    // Luces MUY intensas (emissive) para que bloom haga magia
+    const bulbGeo = new THREE.SphereGeometry(0.06, 14, 14);
+
+    const bulbColors = [
+      0xff2d55, 0x00d2ff, 0xffd60a, 0x30d158, 0xbf5af2, 0xff9f0a
+    ];
+
+    const bulbs = [];
+    for(let i=0;i<SETTINGS.bulbs;i++){
+      const c = new THREE.Color(bulbColors[i % bulbColors.length]);
+
+      const mat = new THREE.MeshStandardMaterial({
+        color: c,
+        emissive: c,
+        emissiveIntensity: 2.2, // FUERTE (bloom)
+        roughness: 0.35,
+        metalness: 0.0
+      });
+
+      const b = new THREE.Mesh(bulbGeo, mat);
+
+      const layer = cones[(Math.random()*cones.length)|0];
+      const y = THREE.MathUtils.lerp(layer.yBase+0.06, layer.yTop-0.06, Math.random());
+      const t = (y - layer.yBase)/layer.height;
+      const r = (layer.radius*(1 - t)) + 0.03;
+
+      const ang = Math.random()*Math.PI*2;
+      b.position.set(Math.cos(ang)*r, y, Math.sin(ang)*r);
+
+      b.castShadow = false;
+
+      b.userData = {
+        base: 1.7 + Math.random()*1.4,
+        speed: 1.0 + Math.random()*2.2,
+        phase: Math.random()*Math.PI*2
+      };
+
+      group.add(b);
+      bulbs.push(b);
+    }
+
+    // Ornamentos reflectantes (esferas con “reflejo”)
+    const ornamentGeo = new THREE.SphereGeometry(0.12, 20, 20);
+    const ornamentColors = [0xff3b30, 0x34c759, 0x0a84ff, 0xffcc00, 0xff2d55];
+
+    const ornaments = [];
+    for(let i=0;i<SETTINGS.ornaments;i++){
+      const oc = new THREE.Color(ornamentColors[(Math.random()*ornamentColors.length)|0]);
+
+      const ornamentMat = new THREE.MeshPhysicalMaterial({
+        color: oc,
+        metalness: 1.0,
+        roughness: 0.12,     // brillo espejo
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.06,
+        envMap: envTex,
+        envMapIntensity: 1.2
+      });
+
+      const o = new THREE.Mesh(ornamentGeo, ornamentMat);
+
+      const layer = cones[(Math.random()*cones.length)|0];
+      const y = THREE.MathUtils.lerp(layer.yBase+0.12, layer.yTop-0.12, Math.random());
+      const t = (y - layer.yBase)/layer.height;
+      const r = (layer.radius*(1 - t)) + 0.09;
+
+      const ang = Math.random()*Math.PI*2;
+      o.position.set(Math.cos(ang)*r, y, Math.sin(ang)*r);
+
+      o.castShadow = true;
+      group.add(o);
+      ornaments.push(o);
+    }
+
+    // Estrella con glow bestia
+    star = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.22, 0),
+      new THREE.MeshStandardMaterial({
+        color: 0xfff2a6,
+        emissive: 0xfff2a6,
+        emissiveIntensity: 4.2, // bloom baby
+        roughness: 0.25,
+        metalness: 0.0,
+        flatShading: true
+      })
+    );
+    star.position.y = cones[cones.length-1].yTop + 0.28;
+    group.add(star);
+
+    // “Halo” real sin levantar fondo
+    const starLight = new THREE.PointLight(0xfff2a6, 1.1, 6);
+    starLight.position.copy(star.position);
+    group.add(starLight);
+
+    // Guardamos referencias para animación
+    group.userData.bulbs = bulbs;
+    group.userData.ornaments = ornaments;
+
+    return group;
+  }
+
+  function jitter(geometry, amt){
+    const p = geometry.attributes.position;
+    for(let i=0;i<p.count;i++){
+      const x=p.getX(i), y=p.getY(i), z=p.getZ(i);
+      const fall = 0.55 + Math.min(1, Math.sqrt(x*x+z*z)/2.5);
+      p.setXYZ(
+        i,
+        x + (Math.random()-0.5)*amt*fall,
+        y + (Math.random()-0.5)*amt*0.35,
+        z + (Math.random()-0.5)*amt*fall
+      );
+    }
+    p.needsUpdate = true;
+    geometry.computeVertexNormals();
+  }
+
+  function animate(t=0){
+    requestAnimationFrame(animate);
+    const time = t*0.001;
+
+    // movimiento elegante
+    tree.rotation.y = Math.sin(time*SETTINGS.spin)*0.28;
+
+    // Twinkle fuerte (para que se sienta vivo)
+    const bulbs = tree.userData.bulbs;
+    for(const b of bulbs){
+      const ud = b.userData;
+      const pulse = ud.base + Math.sin(time*ud.speed + ud.phase)*1.15;
+      b.material.emissiveIntensity = Math.max(0.6, pulse);
+    }
+
+    // Ornamentos giran un poco (reflejo cambia)
+    const ornaments = tree.userData.ornaments;
+    for(const o of ornaments){
+      o.rotation.y += 0.01;
+    }
+
+    // Estrella “late”
+    star.rotation.y += 0.02;
+    star.material.emissiveIntensity = 3.6 + Math.sin(time*2.2)*1.2;
+
+    composer.render();
+  }
+
+  function onResize(){
+    camera.aspect = innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+    composer.setSize(innerWidth, innerHeight);
+    bloomPass.setSize(innerWidth, innerHeight);
+  }
+</script>
+</body>
+</html>
